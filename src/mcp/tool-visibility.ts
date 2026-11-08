@@ -562,6 +562,14 @@ export function createToolVisibility(deps: ToolVisibilityDeps): ToolVisibility {
       agentRestrictions.set(agent, typeof dispose === 'function' ? dispose as () => void : () => {})
       appliedByAgent.set(agent, denyKey)
       clearRuntimeNote('mcp-tool-visibility')
+      // 观测点：成功路径此前完全静默，出问题时日志里什么都看不到，只能靠猜。
+      // 只报"非 mcp__ 且非本插件族"的名字 —— 那批是宿主工具，这是新能力生效的直接证据；
+      // 平时自我管理（全是 mcp__ 前缀与本插件 *_manager_*）不刷日志。
+      const hostLike = denyNames.filter((name) => !name.startsWith(MCP_TOOL_PREFIX) && !/^(scene|memory|mcp|skill|subagent|prompt|plugin)_manager_/.test(name))
+      if (hostLike.length > 0) {
+        console.warn('[dsh-plugin-tool-management] restrict applied',
+          JSON.stringify({ agent: String((agent as { id?: unknown })?.id ?? ''), denyCount: denyNames.length, hostTools: hostLike.slice(0, 20) }))
+      }
     } catch (e) {
       // 这个名字在这个 scope 里认不出 / scope 已经收了：可见性半边没生效。执行侧的 guard
       // 仍然拦住调用，所以功能不缺 —— 但必须如实上报，不能假装成功（此前正是静默吞掉）。
@@ -574,6 +582,10 @@ export function createToolVisibility(deps: ToolVisibilityDeps): ToolVisibility {
         detailKey: 'mcp-tool-visibility.partial',
         params: { reason: deps.message(e) },
       })
+      // 失败路径同样要落到日志：`noteRuntime` 只存进程内存，只能从兼容页看到，
+      // 命令行排查时等于没有。带上被拒的名字，否则无法判断是"整份名单被拒"还是别的。
+      console.warn('[dsh-plugin-tool-management] restrict failed',
+        JSON.stringify({ agent: String((agent as { id?: unknown })?.id ?? ''), reason: deps.message(e), denyCount: denyNames.length }))
     }
   }
 
