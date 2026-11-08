@@ -1296,8 +1296,11 @@ export default {
       const globalHidden = toolTableHidden()
       const allow: string[] = []
       const deny: string[] = []
-      // 只算本插件注册过的工具：MCP 工具走各自的 mcp / mcpTools 覆盖，不混进这一域。
-      for (const name of toolTableSizes.keys()) {
+      // 遍历**两份名单的并集**：本插件注册的（`toolTableSizes`）+ 全局注册的（宿主工具）。
+      // 只走前者时，宿主工具的会话层差量永远算不出来 —— 会话层勾不勾都不进 `allow` / `deny`，
+      // 于是"这个对话把 pwsh 关掉"这种覆盖对全局名单完全不起作用。
+      // MCP 工具仍不混进这一域（它们走各自的 mcp / mcpTools 覆盖）。
+      for (const name of new Set<string>([...toolTableSizes.keys(), ...hostToolNames()])) {
         const hiddenHere = effective.has(name)
         const hiddenGlobal = globalHidden.has(name)
         if (!hiddenHere && hiddenGlobal) allow.push(name)
@@ -1462,7 +1465,7 @@ export default {
       // 绕开这套顺序就会留下「名单已经改了、工具下一轮还发给模型」这种最难查的状态。
       // **锁内读-改-写**：presets 必须取锁内最新值，否则并发的存方案会被这次整表写覆盖。
       const saved = await mutateToolTableSettings((current) => ({
-        hidden: normalizeToolTableSettings({ hidden }).hidden.filter((name) => toolTableSizes.has(name)),
+        hidden: normalizeToolTableSettings({ hidden }).hidden.filter(isKnownToolName),
         presets: current.presets,
       }))
       if (!saved.ok) throw new Error(saved.error || toolTableWriteError())
@@ -1529,7 +1532,7 @@ export default {
         try { hidden = await toolTablePresetHidden(presetName) } catch { hidden = null }
         // 方案已不存在：保持现状（与场景表单「悬空绑定不硬失败」同口径）。
         if (hidden === null) return
-        const filtered = hidden.filter((name) => toolTableSizes.has(name))
+        const filtered = hidden.filter(isKnownToolName)
         const res = await scopeStore.mutateAll((scope) => {
           const r = setSceneToolTableInScope(scope, scene, filtered)
           return r.changed ? r.scope : scope
@@ -1988,6 +1991,46 @@ export default {
       get skillCatalog() { return skillCatalog },
       get subagentCatalog() { return subagentCatalog },
     })
+
+    // ---------- 全局工具名缓存（工具表要能关宿主工具）----------
+    //
+    // `toolTableSizes` 只装**本插件注册**的工具（注册漏斗里 `recordToolSize` 写进去的），
+    // 因此拿它当"这个名字合不合法"的判据，等于把宿主工具（`pwsh` / `workflow` /
+    // `session_bridge_*` / `render_*` …）一律判成陌生名字丢弃 —— 那样工具表就永远只能关
+    // 自己的 24 条。
+    //
+    // 判据本该是"**全局注册过**"：官方 `restrict()` 对认不出的名字是整份名单抛错，所以
+    // 过滤这一步必须有，但全集要取 `tools.schemas()`，它不区分工具来源。
+    //
+    // 为什么做成同步快照：五处过滤点（场景写入、方案同步、会话回包、两种写分支）都在同步
+    // 路径上，而 `schemas()` 是异步的。缓存由 `tools/change` 刷新 —— 工具增删本身就是靠
+    // 那条事件告诉我们的，刷新时机与官方一致。
+    //
+    // 空集不是"全部作废"：首次刷新前按 `toolTableSizes` 兜底，行为与改动前一致，不会因为
+    // 缓存没热好而把用户已关的工具放回来。
+    let hostToolNameCache: Set<string> | null = null
+    const hostToolNames = (): Set<string> => hostToolNameCache ?? new Set<string>()
+    /** 刷新全局工具名快照。`tools.schemas()` 抛错时保留旧快照（不清空）。 */
+    const refreshHostToolNames = async (): Promise<void> => {
+      try {
+        const schemas = await tools.schemas()
+        const next = new Set<string>()
+        for (const schema of Array.isArray(schemas) ? schemas : []) {
+          const name = String((schema as { name?: unknown })?.name ?? '')
+          if (name !== '') next.add(name)
+        }
+        hostToolNameCache = next
+      } catch { /* 枚举失败：保留上一份快照 */ }
+    }
+    /**
+     * 这个名字值不值得写进关停名单：本插件注册过 **或** 全局注册过。
+     *
+     * 两处都判而不是只判 `hostToolNames()`：后者在缓存热起来之前是空集，而本插件的工具名
+     * 任何时候都该认（否则 UI 上一次正常的勾选会被静默丢掉）。
+     */
+    const isKnownToolName = (name: string): boolean =>
+      toolTableSizes.has(name) || hostToolNames().has(name)
+
 
     // ---------- 「有官方等价物 ⇒ 我们让位」----------
     // 官方 `skill` 工具（`@deepseek-ai/dsh-tool-skill`）与我们的 `skill_manager_read` 是同一
@@ -3966,7 +4009,7 @@ export default {
      */
     function toolTableSessionPayload(sessionId: string, scope: SessionScope | undefined, settings: ToolTableSettings): any {
       // 只报注册过的名字：基线 / 方案里可能留着更早版本关停过、如今已不存在的工具。
-      const hidden = sessionToolTableHidden(scope, settings.hidden).filter((name) => toolTableSizes.has(name))
+      const hidden = sessionToolTableHidden(scope, settings.hidden).filter(isKnownToolName)
       const source = scope?.toolTableHidden !== undefined
         ? 'session'
         : (scope?.baseline?.toolTableHidden !== undefined ? 'baseline' : 'global')
@@ -4020,7 +4063,7 @@ export default {
           .filter((t) => t && typeof t.name === 'string' && t.name !== '')
           .map((t) => ({ name: String(t.name), hidden: t.hidden === true }))
           // 只收注册过的工具名：陌生名字会让官方 restrict 抛错。
-          .filter((t) => toolTableSizes.has(t.name))
+          .filter((t) => isKnownToolName(t.name))
         : null
       if (!args || (args.set !== true && toggles === null)) {
         // 方案库是全局的：会话层只负责"读这一层 / 应用一份方案"，不在这里存删。
@@ -4046,7 +4089,7 @@ export default {
       }
       // 只收注册过的工具名：陌生名字会让官方 restrict 抛错。
       const target = normalizeToolTableSettings({ hidden: args && args.hidden }).hidden
-        .filter((name) => toolTableSizes.has(name))
+        .filter(isKnownToolName)
       // 老会话的基线里没有这一栏：第一次写时按**当前全局**补一份，
       // 否则退出场景会退回"实时全局"，与"每个对话从创建起有自己的那份"这条口径不符。
       const backfillBaselineTt = scope?.baseline !== undefined && scope.baseline.toolTableHidden === undefined
@@ -5631,6 +5674,9 @@ export default {
         // 工具加载完成后若不重算，注入文本会一直停在「空 / 旧集合」的缓存值上
         //（用户切 MCP 后立刻看上下文注入就是空段 —— 实测）。
         ctx.effect(() => {
+          // 首刷：装配期先取一次全局工具名快照。没有它，第一次 `tools/change` 之前的写操作
+          // （例如场景自动进入时同步工具表）会看不到宿主工具名。
+          void refreshHostToolNames()
           /**
            * 状态段重算的**定窗节流**。
            *
@@ -5664,7 +5710,9 @@ export default {
             }, MCP_STATE_REFRESH_WINDOW_MS)
           }
           const stop = (ctx.on as (event: string, cb: () => void) => (() => void) | void)('tools/change', () => {
-            mcp.scheduleToolRestrictions()
+            // 工具集变了 ⇒ 关停名单的合法全集也变了。先刷快照再重排可见性：反过来会让本轮的
+            // 过滤还用着上一份全集（新增的工具在名单里会被当成陌生名字丢掉）。
+            void refreshHostToolNames().then(() => { mcp.scheduleToolRestrictions() }, () => { mcp.scheduleToolRestrictions() })
             schedule()
           })
           return () => {
