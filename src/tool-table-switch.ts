@@ -51,6 +51,16 @@ export interface ToolTableSwitchDeps {
    * 缺省（未给）时按不让位算，与从前逐字一致。
    */
   carrierHiddenTools?: () => readonly string[]
+  /**
+   * 这个工具名值不值得写进关停名单：本插件注册过 **或** 全局注册过（宿主工具）。
+   *
+   * 原先两处写分支都直接判 `toolTableSizes.has()`，而那张表只装本插件注册的工具 ——
+   * 于是界面勾掉 `pwsh` / `session_bridge_*` 这类宿主工具时，名字在这里被当陌生名字丢掉，
+   * 工具表就永远只能管自己那 24 条。判据本该是"官方 restrict 认不认识"，也就是全局注册。
+   *
+   * 缺省（未给）时退回 `toolTableSizes.has`，与从前逐字一致。
+   */
+  isKnownToolName?: (name: string) => boolean
 }
 
 /** 工具表切换的对外面：换方案、还原、读当前关停名单。 */
@@ -110,6 +120,15 @@ export function createToolTableSwitch(deps: ToolTableSwitchDeps): ToolTableSwitc
   const TOOL_TABLE_TTL_MS = 3000
   /** 注册时量到的工具体积（只记真进了表的那些；量的是 register 收到的整份定义）。 */
   const toolTableSizes = new Map<string, number>()
+  /**
+   * 这个名字值不值得写进关停名单。
+   *
+   * 两处写分支（`toggle` 逐条改、`set` 整份替换）共用它。缺省退回 `toolTableSizes.has`，
+   * 与改动前逐字一致；母文件给了 `isKnownToolName` 时按那份判 —— 它是"本插件注册过 或
+   * 全局注册过"，后者才让宿主工具进得了关停名单。
+   */
+  const knownToolName = (name: string): boolean =>
+    (deps.isKnownToolName ?? ((n: string) => toolTableSizes.has(n)))(name)
   /** 工具名 → 一句话用途（描述的首句）。 */
   const toolTableSummaries = new Map<string, string>()
   /**
@@ -328,9 +347,9 @@ export function createToolTableSwitch(deps: ToolTableSwitchDeps): ToolTableSwitc
         .filter((t) => t && typeof t.name === 'string' && t.name !== '')
         .map((t) => ({ name: String(t.name), hidden: t.hidden === true }))
         // 只收**已注册**的名字：写进来的陌生名字在下一次 restrict 时会让官方抛错。
-        .filter((t) => toolTableSizes.has(t.name))
+        .filter((t) => knownToolName(t.name))
       if (toggles.length === 0) {
-        return { ok: false, error: 'none of these are this plugin\'s tools: ' + args.toggle.map((t: any) => String(t && t.name)).join(', ') }
+        return { ok: false, error: 'none of these are registered tools: ' + args.toggle.map((t: any) => String(t && t.name)).join(', ') }
       }
       const outcome = await mutateToolTableSettings((current) => ({
         hidden: applyToolTableToggles(current.hidden, toggles),
@@ -348,7 +367,7 @@ export function createToolTableSwitch(deps: ToolTableSwitchDeps): ToolTableSwitc
     // （"names unknown global tool"）。注册失败的工具本来也不在表里。
     const outcome = await mutateToolTableSettings((current) => {
       const hidden = normalizeToolTableSettings({ hidden: args.hidden }).hidden
-        .filter((name) => toolTableSizes.has(name))
+        .filter(knownToolName)
       return { hidden, presets: current.presets }
     })
     if (!outcome.ok) return outcome

@@ -1982,16 +1982,6 @@ export default {
     // 这段的正文，不是这段的顺序（顺序就是依赖顺序）。
     // mcp / skillCatalog / subagentCatalog 在本块之后才建，按 getter 交进去：取值发生在真正要
     // 用的那一刻，与原闭包同形，既不撞 TDZ 也不动搬走的那些行。
-    const {
-      toolTableSizes, toolTableSummaries, recordToolSize, readToolTableSettings, toolTableState, toolTableWriteError, toolTableHidden,
-      mutateToolTableSettings, toolTableReport, toolTableOp,
-    } = createToolTableSwitch({
-      ensurePaths, readJsonFileStrict, writeJsonFile, withWriteLock, message, EMPTY_TOOL_SET,
-      get mcp() { return mcp },
-      get skillCatalog() { return skillCatalog },
-      get subagentCatalog() { return subagentCatalog },
-    })
-
     // ---------- 全局工具名缓存（工具表要能关宿主工具）----------
     //
     // `toolTableSizes` 只装**本插件注册**的工具（注册漏斗里 `recordToolSize` 写进去的），
@@ -2002,12 +1992,15 @@ export default {
     // 判据本该是"**全局注册过**"：官方 `restrict()` 对认不出的名字是整份名单抛错，所以
     // 过滤这一步必须有，但全集要取 `tools.schemas()`，它不区分工具来源。
     //
-    // 为什么做成同步快照：五处过滤点（场景写入、方案同步、会话回包、两种写分支）都在同步
-    // 路径上，而 `schemas()` 是异步的。缓存由 `tools/change` 刷新 —— 工具增删本身就是靠
-    // 那条事件告诉我们的，刷新时机与官方一致。
+    // 为什么做成同步快照：几处过滤点（场景写入、方案同步、会话回包、两处写分支、会话差量）
+    // 都在同步路径上，而 `schemas()` 是异步的。缓存由 `tools/change` 刷新 —— 工具增删本身
+    // 就是靠那条事件告诉我们的，刷新时机与官方一致。
     //
     // 空集不是"全部作废"：首次刷新前按 `toolTableSizes` 兜底，行为与改动前一致，不会因为
     // 缓存没热好而把用户已关的工具放回来。
+    //
+    // 声明必须在 `createToolTableSwitch` **之前**：它的 deps 里要传 `isKnownToolName`，
+    // 放到后面就是 TDZ（`const` 未初始化即读取，运行时抛 ReferenceError）。
     let hostToolNameCache: Set<string> | null = null
     const hostToolNames = (): Set<string> => hostToolNameCache ?? new Set<string>()
     /** 刷新全局工具名快照。`tools.schemas()` 抛错时保留旧快照（不清空）。 */
@@ -2022,15 +2015,32 @@ export default {
         hostToolNameCache = next
       } catch { /* 枚举失败：保留上一份快照 */ }
     }
+
+    const {
+      toolTableSizes, toolTableSummaries, recordToolSize, readToolTableSettings, toolTableState, toolTableWriteError, toolTableHidden,
+      mutateToolTableSettings, toolTableReport, toolTableOp,
+    } = createToolTableSwitch({
+      ensurePaths, readJsonFileStrict, writeJsonFile, withWriteLock, message, EMPTY_TOOL_SET,
+      get mcp() { return mcp },
+      get skillCatalog() { return skillCatalog },
+      get subagentCatalog() { return subagentCatalog },
+      // 写分支的名字判据：本插件注册过 或 全局注册过（宿主工具）。放在这里而不是让那个模块
+      // 自取，是为了两份名单只有一个真相 —— 快照与刷新时机都在本文件。
+      isKnownToolName: (name: string) => isKnownToolName(name),
+    })
+
     /**
      * 这个名字值不值得写进关停名单：本插件注册过 **或** 全局注册过。
      *
      * 两处都判而不是只判 `hostToolNames()`：后者在缓存热起来之前是空集，而本插件的工具名
      * 任何时候都该认（否则 UI 上一次正常的勾选会被静默丢掉）。
+     *
+     * 函数声明（而非 `const` 箭头）是刻意的：上面的 deps 在构造期就可能调用它，函数声明
+     * 有提升，不会踩 TDZ。
      */
-    const isKnownToolName = (name: string): boolean =>
-      toolTableSizes.has(name) || hostToolNames().has(name)
-
+    function isKnownToolName(name: string): boolean {
+      return toolTableSizes.has(name) || hostToolNames().has(name)
+    }
 
     // ---------- 「有官方等价物 ⇒ 我们让位」----------
     // 官方 `skill` 工具（`@deepseek-ai/dsh-tool-skill`）与我们的 `skill_manager_read` 是同一
