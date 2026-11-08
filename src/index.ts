@@ -2002,17 +2002,23 @@ export default {
     // 声明必须在 `createToolTableSwitch` **之前**：它的 deps 里要传 `isKnownToolName`，
     // 放到后面就是 TDZ（`const` 未初始化即读取，运行时抛 ReferenceError）。
     let hostToolNameCache: Set<string> | null = null
+    /** 全局工具 schema 快照：界面列表要用它列出宿主工具（体积估算也取自这里）。 */
+    let hostToolSchemaCache: readonly { name: string }[] = []
     const hostToolNames = (): Set<string> => hostToolNameCache ?? new Set<string>()
     /** 刷新全局工具名快照。`tools.schemas()` 抛错时保留旧快照（不清空）。 */
     const refreshHostToolNames = async (): Promise<void> => {
       try {
         const schemas = await tools.schemas()
         const next = new Set<string>()
+        const rows: { name: string; description?: string; parameters?: unknown }[] = []
         for (const schema of Array.isArray(schemas) ? schemas : []) {
           const name = String((schema as { name?: unknown })?.name ?? '')
-          if (name !== '') next.add(name)
+          if (name === '') continue
+          next.add(name)
+          rows.push(schema as { name: string })
         }
         hostToolNameCache = next
+        hostToolSchemaCache = rows
       } catch { /* 枚举失败：保留上一份快照 */ }
     }
 
@@ -2027,6 +2033,8 @@ export default {
       // 写分支的名字判据：本插件注册过 或 全局注册过（宿主工具）。放在这里而不是让那个模块
       // 自取，是为了两份名单只有一个真相 —— 快照与刷新时机都在本文件。
       isKnownToolName: (name: string) => isKnownToolName(name),
+      // 界面列表要列出宿主工具（否则勾不到）。取的是同一份 schemas 快照。
+      hostToolSchemas: () => hostToolSchemaCache,
     })
 
     /**

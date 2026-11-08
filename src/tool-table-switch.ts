@@ -61,6 +61,13 @@ export interface ToolTableSwitchDeps {
    * 缺省（未给）时退回 `toolTableSizes.has`，与从前逐字一致。
    */
   isKnownToolName?: (name: string) => boolean
+  /**
+   * 全局（宿主）工具的 schema 快照：兼容页「模型工具表」要**列出**它们，界面才勾得到。
+   *
+   * 只用来渲染列表与估算体积，不参与合法性判定（那个走 `isKnownToolName`）。
+   * 缺省（未给）时不列宿主工具，与改动前逐字一致。
+   */
+  hostToolSchemas?: () => readonly { name: string }[]
 }
 
 /** 工具表切换的对外面：换方案、还原、读当前关停名单。 */
@@ -233,7 +240,32 @@ export function createToolTableSwitch(deps: ToolTableSwitchDeps): ToolTableSwitc
     }
     return toolTableCache.off
   }
-  const toolTableRows = (): ToolTableRow[] => [...toolTableSizes].map(([name, bytes]) => ({ name, bytes }))
+  /**
+   * 报表里的行：**本插件注册的工具 + 宿主（全局）工具**。
+   *
+   * 原先只遍历 `toolTableSizes`，于是兼容页的「模型工具表」只列本插件那 24 条 —— 宿主工具
+   * 勾不到、也看不见，功能等于只有一半。
+   *
+   * 体积口径分两种：本插件那批是 `recordToolSize` 量的**整份定义**（与宿主
+   * `estimateToolsTokens` 同口径）；宿主工具只能拿 `tools.schemas()` 回来的
+   * `name / description / parameters` 估，比整份定义略小。两者都按 `estimateTok`（字符/4）
+   * 折 token，所以这里的差异是"少算了 output / execute"，不影响排序与量级判断。
+   *
+   * 名字重复时以本插件那份为准（它量的数更准）。
+   */
+  const toolTableRows = (): ToolTableRow[] => {
+    const rows: ToolTableRow[] = [...toolTableSizes].map(([name, bytes]) => ({ name, bytes }))
+    const seen = new Set(toolTableSizes.keys())
+    for (const schema of deps.hostToolSchemas?.() ?? []) {
+      const name = String(schema?.name ?? '')
+      if (name === '' || seen.has(name)) continue
+      seen.add(name)
+      let bytes = 0
+      try { bytes = JSON.stringify(schema).length } catch { bytes = 0 }
+      rows.push({ name, bytes })
+    }
+    return rows
+  }
   const toolTableReport = (hidden: readonly string[] = [...toolTableHidden()]): ToolTableReport =>
     buildToolTableReport(toolTableRows(), hidden, deps.carrierHiddenTools ? deps.carrierHiddenTools() : [])
   /** 落盘 + 同步内存缓存；调用方必须已持有写锁。 */
