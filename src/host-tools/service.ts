@@ -131,7 +131,7 @@ export function createHostToolsService(deps: HostToolsServiceDeps): HostToolsSer
     if (args?.set === true || Array.isArray(args?.toggle)) {
       return args?.set === true ? setHidden(args) : toggle(args)
     }
-    return readState(args)
+    return wrap(readState)(args)
   }
 
   return {
