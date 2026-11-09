@@ -28,8 +28,6 @@ export interface HostToolsServiceDeps {
 
 export interface HostToolsService {
   ops: Record<string, (args: any) => Promise<any>>
-  /** 本服务的写 op 名，供门禁派生。 */
-  writeOps: ReadonlySet<string>
   /** 当前生效的隐藏名单（供可见性模块读取，同步路径用）。 */
   hiddenSync(): readonly string[]
   /** 读一份最新设置。 */
@@ -125,8 +123,6 @@ export function createHostToolsService(deps: HostToolsServiceDeps): HostToolsSer
     return { hidden: result.settings.hidden }
   })
 
-  const writeOps: ReadonlySet<string> = new Set(['host-tools'])
-
   const op = async (args: any): Promise<any> => {
     if (args?.set === true || Array.isArray(args?.toggle)) {
       return args?.set === true ? setHidden(args) : toggle(args)
@@ -136,7 +132,6 @@ export function createHostToolsService(deps: HostToolsServiceDeps): HostToolsSer
 
   return {
     ops: { 'host-tools': op },
-    writeOps,
     hiddenSync: () => hiddenCache,
     read: readState,
   }

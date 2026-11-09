@@ -5011,7 +5011,6 @@ export default {
         ...memoriesService.writeOps,
         ...archiveService.writeOps,
         ...subagentService.writeOps,
-        ...hostToolsService.writeOps,
       ]))
       if (problems.length) {
         ctx.logger?.warn?.(`op 登记表与实际 op 表对不上（${problems.length} 处）：${problems.join('；')}`)

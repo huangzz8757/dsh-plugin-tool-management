@@ -291,8 +291,8 @@ export const OP_REGISTRY: Readonly<Record<string, OpClass>> = Object.freeze({
     write: true,
     writeWhen: (a) => a.set === true || a.toggle !== undefined || a.presetSave !== undefined || a.presetDelete !== undefined,
   },
-  // 宿主工具关停名单：读写同一个 op，`set` / `toggle` 才算写。写侧车、改每轮请求的内容，
-  // 与 tool-table 同款门禁。service 自报的 writeOps 里有它，两边对账一致。
+  // 宿主工具关停名单：读写同一个 op，`set` / `toggle` 才算写。与 tool-table 同款门禁
+  // （write + writeWhen，由登记表经 opsWith('write') 派生 WRITE_OPS，不经 service 自报）。
   'host-tools': {
     write: true,
     writeWhen: (a) => a.set === true || Array.isArray(a.toggle),
