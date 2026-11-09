@@ -83,12 +83,55 @@ export function filterHidden(
 }
 
 /** 侧车文件的形状。 */
+/** 按作用域分桶的关停名单：全局一份 + 工作区 / 会话各自的覆盖。 */
 export interface HostToolSettings {
   version: 1
+  /** 全局层名单，所有会话的默认模板。 */
   hidden: string[]
+  /** 工作区键 → 该工作区的关停名单。 */
+  workspaces: Record<string, string[]>
+  /** 会话键 → 该会话的关停名单。 */
+  sessions: Record<string, string[]>
 }
 
-export const DEFAULT_HOST_TOOL_SETTINGS: HostToolSettings = { version: 1, hidden: [] }
+export const DEFAULT_HOST_TOOL_SETTINGS: HostToolSettings = {
+  version: 1, hidden: [], workspaces: {}, sessions: {},
+}
+
+/** 生效层级键：来自面板顶部的作用域选择器，与 scopeMode 对齐。 */
+export type HostToolScopeKind = 'global' | 'workspace' | 'session'
+
+export interface HostToolScope {
+  kind: HostToolScopeKind
+  /** kind='workspace' | 'session' 时的作用域键；global 时为空串。 */
+  key: string
+}
+
+/**
+ * 按作用域读一份生效名单：会话 → 工作区 → 全局，上层存在就完全取代下层。
+ * 与 `sessionToolTableHidden` 同一条顺序（作者注释里写明工具表是这个形状，不是逐格布尔）。
+ */
+export function hiddenForScope(settings: HostToolSettings, scope: HostToolScope): string[] {
+  if (scope.kind === 'session' && scope.key && Object.prototype.hasOwnProperty.call(settings.sessions, scope.key)) {
+    return settings.sessions[scope.key].slice()
+  }
+  if (scope.kind !== 'global' && scope.key && Object.prototype.hasOwnProperty.call(settings.workspaces, scope.key)) {
+    return settings.workspaces[scope.key].slice()
+  }
+  return settings.hidden.slice()
+}
+
+/** 把一份名单写进指定作用域，返回新的整份设置。 */
+export function withScopeHidden(settings: HostToolSettings, scope: HostToolScope, hidden: readonly string[]): HostToolSettings {
+  const list = [...hidden]
+  if (scope.kind === 'global') {
+    return { ...settings, hidden: list }
+  }
+  if (scope.kind === 'workspace') {
+    return { ...settings, workspaces: { ...settings.workspaces, [scope.key]: list } }
+  }
+  return { ...settings, sessions: { ...settings.sessions, [scope.key]: list } }
+}
 
 /** 宽松归一化：字段可缺，但一旦存在就必须形状正确（类型错要判损坏，不能自愈成空）。 */
 export function normalizeSettings(raw: unknown): HostToolSettings | HostToolFailure {
@@ -99,13 +142,29 @@ export function normalizeSettings(raw: unknown): HostToolSettings | HostToolFail
   if (obj.version !== undefined && obj.version !== 1) {
     return { ok: false, code: 'error.hostTools.version', params: { version: obj.version } }
   }
-  if (obj.hidden !== undefined && !Array.isArray(obj.hidden)) {
-    return { ok: false, code: 'error.hostTools.hiddenShape' }
-  }
-  if (Array.isArray(obj.hidden)) {
-    for (const item of obj.hidden) {
-      if (typeof item !== 'string') return { ok: false, code: 'error.hostTools.hiddenItem' }
+  for (const field of ['hidden'] as const) {
+    if (obj[field] !== undefined && !Array.isArray(obj[field])) {
+      return { ok: false, code: `error.hostTools.${field}Shape` }
     }
   }
-  return { version: 1, hidden: normalizeHidden(obj.hidden) }
+  const buckets: Record<string, Record<string, string[]>> = {}
+  for (const field of ['workspaces', 'sessions'] as const) {
+    const val = obj[field]
+    if (val === undefined) { buckets[field] = {}; continue }
+    if (val === null || typeof val !== 'object' || Array.isArray(val)) {
+      return { ok: false, code: `error.hostTools.${field}Shape` }
+    }
+    const out: Record<string, string[]> = {}
+    for (const [key, list] of Object.entries(val as Record<string, unknown>)) {
+      if (!Array.isArray(list)) return { ok: false, code: `error.hostTools.${field}Shape` }
+      out[key] = normalizeHidden(list)
+    }
+    buckets[field] = out
+  }
+  return {
+    version: 1,
+    hidden: normalizeHidden(obj.hidden),
+    workspaces: buckets.workspaces,
+    sessions: buckets.sessions,
+  }
 }

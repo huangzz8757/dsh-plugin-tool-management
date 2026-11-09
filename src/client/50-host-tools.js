@@ -6,27 +6,36 @@
     // 把开关置灰，两侧一致 —— 关掉这些会让 agent 失去基本工作能力。
     function HostToolsPage(props) {
       var t = props && props.t ? props.t : function (k) { return k }
+      var scopeState = useScopeLayer()
       var ss = react.useState({ loading: true, error: null, data: null }), snapshot = ss[0], setSnapshot = ss[1]
       var bs = react.useState(false), busy = bs[0], setBusy = bs[1]
       var qs = react.useState(''), query = qs[0], setQuery = qs[1]
       var rs = react.useState(null), result = rs[0], setResult = rs[1]
 
+      /** 面板当前编辑的层：与 scope-get 同一份状态，切层后写操作落在新的那层。 */
+      function currentScope() {
+        var mode = scopeState.mode || 'global'
+        if (mode === 'global' || !scopeState.sessionId) return { kind: 'global', key: '' }
+        return { kind: mode, key: scopeState.sessionId }
+      }
+
       function load() {
         setSnapshot(function (prev) { return { loading: true, error: null, data: prev.data } })
-        apiCall('host-tools', {}).then(function (r) {
+        apiCall('host-tools', { scope: currentScope() }).then(function (r) {
           if (r && r.ok) setSnapshot({ loading: false, error: null, data: r.data || {} })
           else setSnapshot({ loading: false, error: (r && (r.code || r.error)) || 'loadFailed', data: null })
         }).catch(function (e) {
           setSnapshot({ loading: false, error: String(e && e.message || e), data: null })
         })
       }
-      react.useEffect(function () { load() }, [])
+      // 切层必须重新拉一次：不订阅时页面停在切层前那份快照。
+      react.useEffect(function () { load() }, [scopeState.mode, scopeState.sessionId])
 
       /** 逐条改：走 op 的 toggle 分支，不整份替换，避免与面板另一处写者互相覆盖。 */
       function toggle(name, hidden) {
         if (busy) return
         setBusy(true); setResult(null)
-        apiCall('host-tools', { toggle: [{ name: name, hidden: !hidden }] }).then(function (r) {
+        apiCall('host-tools', { scope: currentScope(), toggle: [{ name: name, hidden: !hidden }] }).then(function (r) {
           setBusy(false)
           if (r && r.ok) { load() }
           else setResult({ kind: 'err', text: (r && (r.code || r.error)) || 'saveFailed' })

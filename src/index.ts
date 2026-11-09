@@ -2974,11 +2974,11 @@ export default {
       writePatch,
       memoriesService,
       wait,
-      // 兼容页「模型工具表」关掉的工具 + 宿主工具关停名单 + MCP 停用工具**合并成一次
-      // restrict**：官方 `tools.restrict()` 是"每个 scope 一层限制"，两边各调一次会互相覆盖
-      // （后一层赢）。名单的合法性（只含已注册工具）由 manager 那边与 schemas() 求交后保证。
-      // 宿主名单只含纯函数判过的名字（非 mcp__、非本插件工具），与 MCP 域不重叠。
-      pluginHiddenTools: () => [...toolTableHidden(), ...hostToolsService.hiddenSync()],
+      // 兼容页「模型工具表」关掉的工具 + MCP 停用工具合并成一次 restrict：官方
+      // `tools.restrict()` 是"每个 scope 一层限制"，两边各调一次会互相覆盖（后一层赢）。
+      // 名单的合法性（只含已注册工具）由 manager 那边与 schemas() 求交后保证。
+      // 宿主工具名单走 hostToolsOverlay 逐 agent 提供（按作用域分层），不在这里并进全局名单。
+      pluginHiddenTools: () => [...toolTableHidden()],
       // 「这个名字是不是自家工具」：注册漏斗记下的全集（`selfToolNames`，注册成功才记）——
       // 注册事实，不是前缀枚举（前缀表会漏掉控制面工具 `tool_manager_tools`）。
       isPluginToolName: (name: string) => selfToolNames.has(name),
@@ -2997,6 +2997,9 @@ export default {
       sessionMcpOverlay: (agent: unknown) => sessionMcpOverlayOf(agent),
       // 模型工具表也按对话走：本对话的整份关停名单与全局的差异并进同一层 restrict。
       sessionToolTableOverlay: (agent: unknown) => sessionToolTableOverlayOf(agent),
+      // 宿主工具关停名单按作用域分层，逐 agent 取（getter 延迟引用：service 在 mcp 之后构造，
+      // 但回调只在重放时才调用，那时已就绪）。
+      hostToolsOverlay: (agent: unknown) => hostToolsService.overlayFor(agent),
       sessionHiddenServer: (agent: unknown, serverName: string) => sessionServerHiddenOf(agent, serverName),
       // 逐工具会话判定：状态段按它把「本会话把工具全关了」的服务器标成不可用。
       // 每次渲染只建一次会话快照（覆盖 / 场景层 / 基线 / 意图四张表），逐工具再问不会重算。
@@ -3019,7 +3022,7 @@ export default {
       bootId: () => BOOT_ID,
     })
 
-    // ---------- 宿主工具关停（独立侧车 host-tools.json）----------
+    // ---------- 宿主工具关停（独立侧车 host-tools.json，按作用域分层）----------
     // 判据事实取全局 `tools.schemas()`：宿主工具都注册在插件级 ctx.tools（全局层），
     // 与 `tools.view(agent).restrictableNames` 在这一类上是同一个集合。取不到时返回 null
     // = 本轮不列任何宿主工具（保守降级，不误关）。
@@ -3027,6 +3030,16 @@ export default {
       withWriteLock,
       readJsonFileStrict,
       writeJsonFile,
+      mode: () => scopeMode(),
+      // 面板当前编辑的层由客户端在 args.scope 里显式传；这里只作兜底（没有具体键时按全局）。
+      panelScope: () => ({ kind: 'global' as const, key: '' }),
+      scopeOfAgent: (agent: unknown) => {
+        const key = scopeKeyForAgent(agent)
+        if (scopeMode() === 'global' || key === null || key === '') {
+          return { kind: 'global' as const, key: '' }
+        }
+        return { kind: scopeMode(), key }
+      },
       facts: async () => {
         try {
           const schemas = await tools.schemas()
@@ -3036,6 +3049,15 @@ export default {
             if (name !== '') restrictableNames.add(name)
           }
           return { selfToolNames, restrictableNames }
+        } catch { return null }
+      },
+      // 分母口径与界面一致：当前 agent 真正可见的工具，而不是全局注册全集。
+      visibleTools: async (agent: unknown) => {
+        try {
+          const scoped = agent && (agent as any).ctx && (agent as any).ctx.tools
+          if (!scoped || typeof scoped.schemas !== 'function') return null
+          const schemas = await scoped.schemas()
+          return (Array.isArray(schemas) ? schemas : []).map((s: any) => String(s?.name ?? '')).filter(Boolean)
         } catch { return null }
       },
       onWritten: () => mcp.scheduleToolRestrictions(),

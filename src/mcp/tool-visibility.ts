@@ -83,6 +83,8 @@ export interface ToolVisibilityDeps {
   sessionMcpOverlay?(agent: unknown): Promise<{ allow?: readonly string[]; deny?: readonly string[] }>
   /** 本会话的模型工具表覆盖：与 MCP overlay 合进同一层 restrict。 */
   sessionToolTableOverlay?(agent: unknown): { allow?: readonly string[]; deny?: readonly string[] } | Promise<{ allow?: readonly string[]; deny?: readonly string[] }>
+  /** 本会话的宿主工具关停覆盖：同一层 restrict 的第三个来源。 */
+  hostToolsOverlay?(agent: unknown): Promise<{ allow?: readonly string[]; deny?: readonly string[] }>
 }
 
 /** 可见性接缝的对外面：停用表、状态与问题上报。 */
@@ -553,6 +555,14 @@ export function createToolVisibility(deps: ToolVisibilityDeps): ToolVisibility {
         }
       } catch { /* 取不到 = 跟随全局 */ }
     }
+    // 宿主工具关停名单：按作用域分层后逐 agent 取，与前两个 overlay 合并进同一层 restrict。
+    // 只产出 deny（名单里 = 关掉），不产出 allow —— 宿主工具没有别的路径会关掉它们。
+    if (deps.hostToolsOverlay) {
+      try {
+        const ov = await deps.hostToolsOverlay(agent)
+        if (ov && ov.deny !== undefined && ov.deny.length) extra = [...extra, ...ov.deny]
+      } catch { /* 取不到 = 跟随全局 */ }
+    }
     if (mine !== epoch) return
     if (!seenAgents.has(agent)) return
     // unknown 时 desiredNames 已经包含全部 mcp__*；会话 allow 不得把它们减掉
@@ -721,7 +731,7 @@ export function createToolVisibility(deps: ToolVisibilityDeps): ToolVisibility {
     // 事实读取也有 TTL 缓存；装层本身会再发一次 tools/change，那一轮键相同即收敛，不自激。
     // 有逐 agent 的名单来源时不拿全局键短路：那份名单与会话覆盖 / 官方挂载状态有关，
     // 它们变了不会改全局键。逐 agent 的键判等会把绝大多数挡在装层之前。
-    if (key === appliedNamesKey && deps.carrierHiddenTools === undefined && deps.sessionMcpOverlay === undefined && deps.sessionToolTableOverlay === undefined) return
+    if (key === appliedNamesKey && deps.carrierHiddenTools === undefined && deps.sessionMcpOverlay === undefined && deps.sessionToolTableOverlay === undefined && deps.hostToolsOverlay === undefined) return
     appliedNamesKey = key
     desiredNames = names
     // **绝不无条件 lift**：`liftRestriction` 会把 `appliedByAgent` 的键

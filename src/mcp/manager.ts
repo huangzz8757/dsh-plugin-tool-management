@@ -106,6 +106,8 @@ export interface McpManagerDeps {
    * `allow` = 本对话重新打开、`deny` = 本对话关掉；与 `sessionMcpOverlay` 合进同一层 restrict。
    */
   sessionToolTableOverlay?(agent: unknown): { allow?: readonly string[]; deny?: readonly string[] } | Promise<{ allow?: readonly string[]; deny?: readonly string[] }>
+  /** 本会话的宿主工具关停覆盖：与上面两个 overlay 合进同一层 restrict。 */
+  hostToolsOverlay?(agent: unknown): Promise<{ allow?: readonly string[]; deny?: readonly string[] }>
   /**
    * 某台服务器在本会话里是不是**隐藏**的（同步）：状态段与 `mcp_manager_list` 逐行问它 ——
    * 它们手里都有完整的服务器清单（行数组），逐行判定不需要另建一份"全集"。
@@ -689,6 +691,7 @@ export function createMcpManager(deps: McpManagerDeps): McpManager {
     isPluginToolName: deps.isPluginToolName,
     sessionMcpOverlay: deps.sessionMcpOverlay,
     sessionToolTableOverlay: deps.sessionToolTableOverlay,
+    hostToolsOverlay: deps.hostToolsOverlay,
     normalizeKnownTools, mcpSidecar, SIDECAR_TTL_MS, MCP_DISABLED_TOOLS_FILE, MCP_KNOWN_TOOLS_FILE,
   })
 
