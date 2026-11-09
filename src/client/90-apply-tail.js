@@ -9,6 +9,7 @@
         _pages.SubagentsPage = SubagentsPage
         _pages.MemoryPage = MemoryPage
         _pages.CompatPage = CompatPage
+        _pages.HostToolsPage = HostToolsPage
         // 标题旁的版本徽标也导出：其他页面（提示词页）在用它，测试与排版预览需要能单独渲染。
         _pages.VersionBadge = VersionBadgeComponent
         _pages.t = t

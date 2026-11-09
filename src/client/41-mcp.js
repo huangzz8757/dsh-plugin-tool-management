@@ -2606,10 +2606,11 @@
             : active === 'subagents' ? React.createElement(SubagentsPage)
             : active === 'prompts' ? React.createElement(PromptsPage)
             : active === 'memory' ? React.createElement(MemoryPage)
+            : active === 'hostTools' ? React.createElement(HostToolsPage, { t: t })
             : active === 'compat' ? React.createElement(CompatPage, { t: t })
             : React.createElement(SessionsPage)
           // 页签（[key, 显示名]，顺序即渲染顺序；选项只有一份，键位处理与渲染不会走岔）。
-          var TABS = [['scenes', t('tabs.scenes')], ['mcp', 'MCP'], ['skills', t('tabs.skills')], ['subagents', t('tabs.subagents')], ['prompts', t('tabs.prompts')], ['memory', t('tabs.memory')], ['sessions', t('tabs.sessions')], ['compat', t('tabs.compat')]]
+          var TABS = [['scenes', t('tabs.scenes')], ['mcp', 'MCP'], ['skills', t('tabs.skills')], ['subagents', t('tabs.subagents')], ['prompts', t('tabs.prompts')], ['memory', t('tabs.memory')], ['sessions', t('tabs.sessions')], ['hostTools', t('tabs.hostTools')], ['compat', t('tabs.compat')]]
           // 方向键在页签间移动焦点。这不是锦上添花：非活动页签 tabIndex=-1（roving），
           // 没有方向键的话键盘用户只能 Tab 到当前这一个页签，别的都到不了。
           var onTabKeyDown = function (e) {

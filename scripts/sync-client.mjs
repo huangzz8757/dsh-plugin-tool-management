@@ -46,6 +46,7 @@ const SLICES = [
   '47-memory.js',       // MemoryPage
   '48-slash.js',        // 斜杠命令「工具」段（宿主 / 菜单；不在设置页里）
   '49-sidebar-entry.js',// 侧栏入口（main 面板 + sidebar.panellist 那一行，兼容页那颗开关管）
+  '50-host-tools.js',   // HostToolsPage：宿主工具开关页（独立侧车 host-tools.json）
   '90-apply-tail.js',   // apply 收尾（注册各页 + 导出 _pages）
 ]
 
