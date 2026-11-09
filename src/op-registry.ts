@@ -291,6 +291,12 @@ export const OP_REGISTRY: Readonly<Record<string, OpClass>> = Object.freeze({
     write: true,
     writeWhen: (a) => a.set === true || a.toggle !== undefined || a.presetSave !== undefined || a.presetDelete !== undefined,
   },
+  // 宿主工具关停名单：读写同一个 op，`set` / `toggle` 才算写。写侧车、改每轮请求的内容，
+  // 与 tool-table 同款门禁。service 自报的 writeOps 里有它，两边对账一致。
+  'host-tools': {
+    write: true,
+    writeWhen: (a) => a.set === true || Array.isArray(a.toggle),
+  },
   // 场景页的界面设置（进入场景前要不要弹「会改什么」的预览卡）：写侧车，按写门禁。
   // **刻意不冻结**：它只是界面提示，锁着场景的人在场景页照样该能关掉提醒 —— 冻结的是五个
   // 管理域的改动，不是这个页面的显示偏好（判据见文件头 write/frozen 两段的边界）。

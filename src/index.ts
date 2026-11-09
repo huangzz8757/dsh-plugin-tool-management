@@ -53,6 +53,7 @@ import {
 } from './tools/table.js'
 import { createToolTableSwitch } from './tool-table-switch.js'
 import { createSettingsSidecars } from './settings-sidecars.js'
+import { createHostToolsService } from './host-tools/service.js'
 // 改名 / 进场景 / 存档案的联动（op 重包，从本文件 apply 闭包整段抽出）。
 import { installSceneLinkage } from './scene-linkage.js'
 // 访问令牌的宿主侧配置读写（从本文件 apply 闭包整段抽出，依赖显式传参）。
@@ -2973,10 +2974,11 @@ export default {
       writePatch,
       memoriesService,
       wait,
-      // 兼容页「模型工具表」关掉的工具与 MCP 停用工具**合并成一次 restrict**：官方
-      // `tools.restrict()` 是"每个 scope 一层限制"，两边各调一次会互相覆盖（后一层赢）。
-      // 名单的合法性（只含已注册工具）由 manager 那边与 schemas() 求交后保证。
-      pluginHiddenTools: () => [...toolTableHidden()],
+      // 兼容页「模型工具表」关掉的工具 + 宿主工具关停名单 + MCP 停用工具**合并成一次
+      // restrict**：官方 `tools.restrict()` 是"每个 scope 一层限制"，两边各调一次会互相覆盖
+      // （后一层赢）。名单的合法性（只含已注册工具）由 manager 那边与 schemas() 求交后保证。
+      // 宿主名单只含纯函数判过的名字（非 mcp__、非本插件工具），与 MCP 域不重叠。
+      pluginHiddenTools: () => [...toolTableHidden(), ...hostToolsService.hiddenSync()],
       // 「这个名字是不是自家工具」：注册漏斗记下的全集（`selfToolNames`，注册成功才记）——
       // 注册事实，不是前缀枚举（前缀表会漏掉控制面工具 `tool_manager_tools`）。
       isPluginToolName: (name: string) => selfToolNames.has(name),
@@ -3015,6 +3017,28 @@ export default {
       },
       // 本次启动 id：重启标记用它区分「同一轮启动内的重放」与「上一个进程留下的」。
       bootId: () => BOOT_ID,
+    })
+
+    // ---------- 宿主工具关停（独立侧车 host-tools.json）----------
+    // 判据事实取全局 `tools.schemas()`：宿主工具都注册在插件级 ctx.tools（全局层），
+    // 与 `tools.view(agent).restrictableNames` 在这一类上是同一个集合。取不到时返回 null
+    // = 本轮不列任何宿主工具（保守降级，不误关）。
+    const hostToolsService = createHostToolsService({
+      withWriteLock,
+      readJsonFileStrict,
+      writeJsonFile,
+      facts: async () => {
+        try {
+          const schemas = await tools.schemas()
+          const restrictableNames = new Set<string>()
+          for (const s of Array.isArray(schemas) ? schemas : []) {
+            const name = String((s as { name?: unknown })?.name ?? '')
+            if (name !== '') restrictableNames.add(name)
+          }
+          return { selfToolNames, restrictableNames }
+        } catch { return null }
+      },
+      onWritten: () => mcp.scheduleToolRestrictions(),
     })
 
     // ---------- ops ----------
@@ -4158,6 +4182,9 @@ export default {
       // 清空流水。清完这一条 op 自己会被下面的包装层记进新流水（"谁清过"也留痕）。
       'audit-clear': async () => await clearAudit(),
       'skill-open': skillOpen,
+      // 宿主工具关停名单（独立侧车）：读 / set 整份替换 / toggle 逐条改。
+      // 写门禁由 op-registry 的 writeWhen 判定，写锁在 service 内部。
+      ...hostToolsService.ops,
       // MCP 域 17 个 op（实现在 ./mcp/manager.ts）
       ...mcp.ops,
       // 技能管理 ops（由 ./skills/service.js 提供）：skill-state / skill-detail /
@@ -4984,6 +5011,7 @@ export default {
         ...memoriesService.writeOps,
         ...archiveService.writeOps,
         ...subagentService.writeOps,
+        ...hostToolsService.writeOps,
       ]))
       if (problems.length) {
         ctx.logger?.warn?.(`op 登记表与实际 op 表对不上（${problems.length} 处）：${problems.join('；')}`)
