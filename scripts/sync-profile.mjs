@@ -104,18 +104,45 @@ const PLUGIN_DIR = 'dsh-plugin-tool-management'
 const home = process.env.DSH_HOME || join(homedir(), '.dsh')
 const targetOf = (profile) => join(home, 'profiles', profile, 'node_modules', PLUGIN_DIR)
 
-/** 这台机器上装了本插件的所有 profile（显式传参时只同步那一个）。 */
+/**
+ * 这个 profile 装的是**本 checkout**（file: 源），还是 npm 上的上游版本？
+ *
+ * 判据只有一条，且必须查：profile 的 package.json 里那个依赖的 spec 是不是 file:。
+ * 指向本仓库 file: 才是"从源码装"；0.22.6 这种版本号 = 从 npm 装的上游包。
+ *
+ * WHY（2026-11-12，第三次踩同一个方向）：上游版的 lib/ 由 npm 分发、与本仓库毫无关系；
+ * 把本 checkout 的 lib/ 链过去，等于用 fork 的代码**覆盖**用户特意换成的官方包 ——
+ * 而且没有任何报错，npm run build 照常打印"同步完成"。用户换回官方版后只要跑一次 build
+ * 就被悄悄换回 fork，这正是"改了不生效 / 换不干净"最容易被误判成 bug 的形态。
+ */
+function installedFromCheckout(profile) {
+  try {
+    const manifest = JSON.parse(readFileSync(join(home, 'profiles', profile, 'package.json'), 'utf8'))
+    const spec = String((manifest.dependencies ?? {})[PLUGIN_DIR] ?? (manifest.devDependencies ?? {})[PLUGIN_DIR] ?? '')
+    return spec.startsWith('file:') || spec.startsWith('link:')
+  } catch { /* 读不到清单 = 不敢动它，当上游版跳过 */ }
+  return false
+}
+
+/** 这台机器上从本 checkout 装了本插件的所有 profile（显式传参时只同步那一个）。 */
 function installedProfiles() {
   const root = join(home, 'profiles')
   let names = []
   try { names = readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name) } catch { /* 没有 profiles 目录 = 一台都不装 */ }
-  return names.map(targetOf).filter(existsSync)
+  return names.filter(installedFromCheckout).map(targetOf).filter(existsSync)
 }
 
-const targets = process.argv[2] ? [targetOf(process.argv[2])] : installedProfiles()
+const explicit = process.argv[2]
+const targets = explicit ? [targetOf(explicit)] : installedProfiles()
 if (!targets.length) {
   console.log(`[sync-profile] 没有 profile 装着本插件（${join(home, 'profiles', '*', 'node_modules', PLUGIN_DIR)}），跳过`)
   process.exit(0)
+}
+// 显式点名一个**从 npm 装的** profile 时不静默照做：那是覆盖上游包，得用户自己说清楚。
+if (explicit && !installedFromCheckout(explicit)) {
+  console.error(`[sync-profile] profile "${explicit}" 的 ${PLUGIN_DIR} 不是从本 checkout 装的（spec 不是 file:/link:）——\n`
+    + '  把本仓库的 lib/ 链过去等于用 fork 覆盖上游包，已拒绝。真要覆盖就先把它改成 file: 源。')
+  process.exit(2)
 }
 
 let stats = null
